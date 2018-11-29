@@ -1,5 +1,15 @@
-from temboardagent.postgres import Postgres
+from datetime import datetime
+import hashlib
+import logging
+import os
+from pickle import dumps as pickle
 
+from temboardagent.errors import UserError, HTTPError
+from temboardagent.postgres import Postgres
+from temboardagent.spc import error
+from temboardagent.toolkit import taskmanager
+
+logger = logging.getLogger(__name__)
 
 # Taken from https://github.com/ioguix/pgsql-bloat-estimation/blob/master/table/table_bloat.sql  # noqa
 TABLE_BLOAT_SQL = """
@@ -235,11 +245,11 @@ ORDER BY 1,2
 """  # noqa
 
 
-def get_postgres(app, database):
+def get_postgres(app_config, database):
     '''
     Same as `app.postgres` but with specific database not the default one.
     '''
-    config = dict(**app.config.postgresql)
+    config = dict(**app_config.postgresql)
     config.update(dbname=database)
     return Postgres(**config)
 
@@ -435,3 +445,85 @@ AND table_name = '{}';
     """
     conn.execute(query.format(schema, table))
     return dict(**next(conn.get_rows()))
+
+
+def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
+    # Schedule a vacuum statement through vacuum background worker
+
+    # Check that the specified table exists in schema
+    conn.execute(
+        "SELECT 1 FROM pg_tables WHERE tablename = '{table}' AND "
+        "schemaname = '{schema}'".format(table=table, schema=schema)
+    )
+    if not list(conn.get_rows()):
+        raise HTTPError(404, "Table %s.%s not found" % (schema, table))
+
+    # Schedule a new task to vacuum worker
+
+    # We need to build a uniq id for this task to avoid scheduling twice the
+    # same vacuum statement.
+    m = hashlib.md5()
+    m.update("{database}:{schema}:{table}:{datetime}".format(
+        database=database,
+        schema=schema,
+        table=table,
+        datetime=datetimeutc).encode('utf-8')
+    )
+    # Task scheduling
+    try:
+        res = taskmanager.schedule_task(
+            'vacuum_worker',
+            id=m.hexdigest()[:8],
+            options={
+                'config': pickle(app.config),
+                'dbname': database,
+                'schema': schema,
+                'table': table,
+                'mode': mode
+            },
+            start=datetime.strptime(datetimeutc, '%Y-%m-%dT%H:%M:%SZ'),
+            listener_addr=str(os.path.join(app.config.temboard.home,
+                                           '.tm.socket')),
+            expire=0,
+        )
+    except Exception as e:
+        logger.exception(str(e))
+        raise HTTPError(500, "Unable to schedule vacuum")
+
+    if res.type == taskmanager.MSG_TYPE_ERROR:
+        logger.error(res.content)
+        raise HTTPError(500, "Unable to schedule vacuum")
+
+    return res.content
+
+
+def vacuum(conn, dbname, schema, table, mode):
+    # Run vacuum statement
+    # Check that the specified table exists in schema
+    conn.execute(
+        "SELECT 1 FROM pg_tables WHERE tablename = '{table}' AND "
+        "schemaname = '{schema}'".format(table=table, schema=schema)
+    )
+    if not list(conn.get_rows()):
+        raise UserError("Table %s.%s not found" % (schema, table))
+
+    # Build the SQL query
+    q = "VACUUM"
+    if mode == 'full':
+        q += " FULL"
+    elif mode == 'analyze':
+        q += " ANALYZE"
+    elif mode == 'freeze':
+        q += " FREEZE"
+    q += " {schema}.{table}".format(schema=schema, table=table)
+
+    try:
+        # Try to execute the statement
+        logger.info("Running SQL on DB %s: %s" % (dbname, q))
+        conn.execute(q)
+        logger.info("VACCUM done.")
+    except error as e:
+        logger.exception(str(e))
+        logger.error("Unable to execute SQL: %s" % q)
+        raise UserError("Unable to run vacuum %s on %s.%s"
+                        % (mode, schema, table,))
