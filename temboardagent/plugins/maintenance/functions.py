@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import logging
 import os
@@ -471,6 +471,9 @@ def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
     )
     # Task scheduling
     try:
+        # Convert string datetime to datetime object
+        dt = datetime.strptime(datetimeutc, '%Y-%m-%dT%H:%M:%SZ')
+
         res = taskmanager.schedule_task(
             'vacuum_worker',
             id=m.hexdigest()[:8],
@@ -481,7 +484,9 @@ def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
                 'table': table,
                 'mode': mode
             },
-            start=datetime.strptime(datetimeutc, '%Y-%m-%dT%H:%M:%SZ'),
+            # We add one microsecond here to be compliant with scheduler
+            # datetime format expected during task recovery
+            start=(dt + timedelta(microseconds=1)),
             listener_addr=str(os.path.join(app.config.temboard.home,
                                            '.tm.socket')),
             expire=0,
