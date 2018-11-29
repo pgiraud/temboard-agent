@@ -103,6 +103,11 @@ def post_vacuum(http_context, app):
                                                      table, mode, dt, app)
 
 
+@routes.get(b'/vacuum/scheduled')
+def scheduled_vacuum(http_context, app):
+    return maintenance_functions.list_scheduled_vacuum(app)
+
+
 @taskmanager.worker(pool_size=10)
 def vacuum_worker(config, dbname, schema, table, mode):
     config = unpickle(config)

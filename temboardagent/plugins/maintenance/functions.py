@@ -532,3 +532,33 @@ def vacuum(conn, dbname, schema, table, mode):
         logger.error("Unable to execute SQL: %s" % q)
         raise UserError("Unable to run vacuum %s on %s.%s"
                         % (mode, schema, table,))
+
+
+def list_scheduled_vacuum(app):
+    # Get list of scheduled vacuum operations
+    ret = []
+    try:
+        # Ask it to the task manager
+        tasks = taskmanager.TaskManager.send_message(
+            str(os.path.join(app.config.temboard.home, '.tm.socket')),
+            taskmanager.Message(taskmanager.MSG_TYPE_TASK_LIST, ''),
+            authkey=None,
+        )
+    except Exception as e:
+        logger.exception(str(e))
+        raise HTTPError(500, "Unable to get scheduled vacuum list")
+
+    for task in tasks:
+        # We only want vacuum tasks
+        if task['worker_name'] != 'vacuum_worker':
+            continue
+        ret.append(dict(
+            id=task['id'],
+            dbname=task['options'].get('dbname'),
+            schema=task['options'].get('schema'),
+            table=task['options'].get('table'),
+            mode=task['options'].get('mode'),
+            datetime=task['start_datetime'].strftime("%Y-%m-%dT%H:%M:%SZ"),
+            status=task['status']
+        ))
+    return ret
