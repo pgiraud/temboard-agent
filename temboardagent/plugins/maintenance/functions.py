@@ -534,6 +534,16 @@ def vacuum(conn, dbname, schema, table, mode):
                         % (mode, schema, table,))
 
 
+def task_status_label(status):
+    labels=['todo', 'scheduled', 'queued', 'doing', 'done', 'failed',
+            'canceled', 'aborted', 'abort']
+    p = status.bit_length() - 1
+    try:
+        return labels[p]
+    except IndexError:
+        return 'unknown'
+
+
 def list_scheduled_vacuum(app):
     # Get list of scheduled vacuum operations
     ret = []
@@ -559,6 +569,31 @@ def list_scheduled_vacuum(app):
             table=task['options'].get('table'),
             mode=task['options'].get('mode'),
             datetime=task['start_datetime'].strftime("%Y-%m-%dT%H:%M:%SZ"),
-            status=task['status']
+            status=task_status_label(task['status'])
         ))
     return ret
+
+
+def cancel_scheduled_vacuum(id, app):
+    # Cancel one scheduled vacuum operation. If the vacuum is running, the task
+    # is going to be aborted.
+
+    # Check the id
+    if not id in [t['id'] for t in list_scheduled_vacuum(app)]:
+        raise HTTPError(404, "Scheduled vacuum operation not found")
+
+    try:
+        # Ask it to the task manager
+        taskmanager.TaskManager.send_message(
+            str(os.path.join(app.config.temboard.home, '.tm.socket')),
+            taskmanager.Message(
+                taskmanager.MSG_TYPE_TASK_CANCEL,
+                dict(task_id=id),
+            ),
+            authkey=None,
+        )
+    except Exception as e:
+        logger.exception(str(e))
+        raise HTTPError(500, "Unable to cancel vacuum operation")
+
+    return dict(response="ok")

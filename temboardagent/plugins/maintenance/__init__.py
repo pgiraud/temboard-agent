@@ -33,9 +33,9 @@ def get_instance(http_context, app):
 T_DATABASE_NAME = T_OBJECTNAME
 T_SCHEMA_NAME = T_OBJECTNAME
 T_TABLE_NAME = T_OBJECTNAME
-T_VACUUMMODE = '(^(standard|full|freeze|analyze)$)'
-T_TIMESTAMPUTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
-
+T_VACUUM_MODE = b'(^(standard|full|freeze|analyze)$)'
+T_TIMESTAMP_UTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
+T_VACUUM_ID = b'(^[0-9a-f]{8}$)'
 
 @routes.get(b'/%s' % (T_DATABASE_NAME))
 def get_database(http_context, app):
@@ -87,13 +87,13 @@ def post_vacuum(http_context, app):
     table = post['table']
     if 'datetime' in post:
         validate_parameters(post, [
-            ('datetime', T_TIMESTAMPUTC, False),
+            ('datetime', T_TIMESTAMP_UTC, False),
         ])
     dt = post.get('datetime',
                         datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
     if 'mode' in post:
         validate_parameters(post, [
-            ('mode', T_VACUUMMODE, False),
+            ('mode', T_VACUUM_MODE, False),
         ])
     mode = post.get('mode', 'standard')
 
@@ -106,6 +106,12 @@ def post_vacuum(http_context, app):
 @routes.get(b'/vacuum/scheduled')
 def scheduled_vacuum(http_context, app):
     return maintenance_functions.list_scheduled_vacuum(app)
+
+
+@routes.delete(b'/vacuum/'+T_VACUUM_ID)
+def delete_vacuum(http_context, app):
+    vacuum_id = http_context['urlvars'][0]
+    return maintenance_functions.cancel_scheduled_vacuum(vacuum_id, app)
 
 
 @taskmanager.worker(pool_size=10)
