@@ -398,7 +398,8 @@ SELECT table_name AS name,
        tbloat.bloat_size AS bloat_bytes,
        pg_size_pretty(tbloat.bloat_size::bigint) AS bloat_size,
        ibloat.bloat_size AS index_bloat_bytes,
-       pg_size_pretty(ibloat.bloat_size::bigint) AS index_bloat_size
+       pg_size_pretty(ibloat.bloat_size::bigint) AS index_bloat_size,
+       fillfactor
 FROM (
   SELECT *, total_bytes - index_bytes - COALESCE(toast_bytes,0) AS table_bytes
   FROM (
