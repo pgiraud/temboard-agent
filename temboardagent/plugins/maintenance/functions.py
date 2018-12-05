@@ -535,8 +535,8 @@ def vacuum(conn, dbname, schema, table, mode):
 
 
 def task_status_label(status):
-    labels=['todo', 'scheduled', 'queued', 'doing', 'done', 'failed',
-            'canceled', 'aborted', 'abort']
+    labels = ['todo', 'scheduled', 'queued', 'doing', 'done', 'failed',
+              'canceled', 'aborted', 'abort']
     p = status.bit_length() - 1
     try:
         return labels[p]

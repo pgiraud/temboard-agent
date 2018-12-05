@@ -7,7 +7,7 @@ from temboardagent.toolkit import taskmanager
 from temboardagent.tools import validate_parameters
 from temboardagent.types import T_OBJECTNAME
 
-from . import functions as maintenance_functions
+from . import functions
 
 
 routes = RouteSet(prefix=b'/maintenance')
@@ -16,15 +16,15 @@ routes = RouteSet(prefix=b'/maintenance')
 @routes.get(b'')
 def get_instance(http_context, app):
     with app.postgres.connect() as conn:
-        rows = maintenance_functions.get_databases(conn)
+        rows = functions.get_databases(conn)
 
     databases = []
     for database in rows:
         # we need to connect with a different database
         dbname = database['datname']
-        with maintenance_functions.get_postgres(app.config, dbname).connect() \
+        with functions.get_postgres(app.config, dbname).connect() \
                 as conn:
-            database.update(**maintenance_functions.get_database(conn))
+            database.update(**functions.get_database(conn))
         databases.append(database)
 
     return {'databases': databases}
@@ -37,12 +37,13 @@ T_VACUUM_MODE = b'(^(standard|full|freeze|analyze)$)'
 T_TIMESTAMP_UTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
 T_VACUUM_ID = b'(^[0-9a-f]{8}$)'
 
+
 @routes.get(b'/%s' % (T_DATABASE_NAME))
 def get_database(http_context, app):
     dbname = http_context['urlvars'][0]
-    with maintenance_functions.get_postgres(app.config, dbname).connect() as conn:
-        database = maintenance_functions.get_database_size(conn)
-        schemas = maintenance_functions.get_schemas(conn)
+    with functions.get_postgres(app.config, dbname).connect() as conn:
+        database = functions.get_database_size(conn)
+        schemas = functions.get_schemas(conn)
     return dict(database, **{'schemas': schemas})
 
 
@@ -50,11 +51,11 @@ def get_database(http_context, app):
 def get_schema(http_context, app):
     dbname = http_context['urlvars'][0]
     schema = http_context['urlvars'][1]
-    with maintenance_functions.get_postgres(app.config, dbname).connect() \
+    with functions.get_postgres(app.config, dbname).connect() \
             as conn:
-        tables = maintenance_functions.get_tables(conn, schema)
-        indexes = maintenance_functions.get_schema_indexes(conn, schema)
-        schema = maintenance_functions.get_schema(conn, schema)
+        tables = functions.get_tables(conn, schema)
+        indexes = functions.get_schema_indexes(conn, schema)
+        schema = functions.get_schema(conn, schema)
     return dict(dict(tables, **indexes), **schema)
 
 
@@ -65,11 +66,10 @@ def get_table(http_context, app):
     schema = http_context['urlvars'][1]
     table = http_context['urlvars'][2]
 
-    with maintenance_functions.get_postgres(app.config, dbname).connect() \
+    with functions.get_postgres(app.config, dbname).connect() \
             as conn:
-        ret = maintenance_functions.get_table(conn, schema, table)
-        ret.update(**maintenance_functions.get_table_indexes(conn, schema,
-                                                             table))
+        ret = functions.get_table(conn, schema, table)
+        ret.update(**functions.get_table_indexes(conn, schema, table))
         return ret
 
 
@@ -90,37 +90,36 @@ def post_vacuum(http_context, app):
             ('datetime', T_TIMESTAMP_UTC, False),
         ])
     dt = post.get('datetime',
-                        datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
+                  datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
     if 'mode' in post:
         validate_parameters(post, [
             ('mode', T_VACUUM_MODE, False),
         ])
     mode = post.get('mode', 'standard')
 
-    with maintenance_functions.get_postgres(app.config, dbname).connect() \
-            as conn:
-        return maintenance_functions.schedule_vacuum(conn, dbname, schema,
-                                                     table, mode, dt, app)
+    with functions.get_postgres(app.config, dbname).connect() as conn:
+        return functions.schedule_vacuum(conn, dbname, schema, table, mode,
+                                         dt, app)
 
 
 @routes.get(b'/vacuum/scheduled')
 def scheduled_vacuum(http_context, app):
-    return maintenance_functions.list_scheduled_vacuum(app)
+    return functions.list_scheduled_vacuum(app)
 
 
-@routes.delete(b'/vacuum/'+T_VACUUM_ID)
+@routes.delete(b'/vacuum/' + T_VACUUM_ID)
 def delete_vacuum(http_context, app):
     vacuum_id = http_context['urlvars'][0]
-    return maintenance_functions.cancel_scheduled_vacuum(vacuum_id, app)
+    return functions.cancel_scheduled_vacuum(vacuum_id, app)
 
 
 @taskmanager.worker(pool_size=10)
 def vacuum_worker(config, dbname, schema, table, mode):
     config = unpickle(config)
 
-    with maintenance_functions.get_postgres(config, dbname).connect() \
+    with functions.get_postgres(config, dbname).connect() \
             as conn:
-        return maintenance_functions.vacuum(conn, dbname, schema, table, mode)
+        return functions.vacuum(conn, dbname, schema, table, mode)
 
 
 class MaintenancePlugin(object):
