@@ -73,18 +73,15 @@ def get_table(http_context, app):
         return ret
 
 
-@routes.post(b'/vacuum')
+@routes.post(b'/%s/schema/%s/table/%s/vacuum' % (T_DATABASE_NAME,
+                                                 T_SCHEMA_NAME,
+                                                 T_TABLE_NAME))
 def post_vacuum(http_context, app):
+    dbname = http_context['urlvars'][0]
+    schema = http_context['urlvars'][1]
+    table = http_context['urlvars'][2]
     # Parameters format validation
     post = http_context['post']
-    validate_parameters(post, [
-        ('dbname', T_OBJECTNAME, False),
-        ('schema', T_OBJECTNAME, False),
-        ('table', T_OBJECTNAME, False),
-    ])
-    dbname = post['dbname']
-    schema = post['schema']
-    table = post['table']
     if 'datetime' in post:
         validate_parameters(post, [
             ('datetime', T_TIMESTAMP_UTC, False),
