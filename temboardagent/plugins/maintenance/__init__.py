@@ -33,7 +33,7 @@ def get_instance(http_context, app):
 T_DATABASE_NAME = T_OBJECTNAME
 T_SCHEMA_NAME = T_OBJECTNAME
 T_TABLE_NAME = T_OBJECTNAME
-T_VACUUM_MODE = b'(^(standard|full|freeze|analyze)$)'
+T_VACUUM_MODE = b'(((^|,)(standard|full|freeze|analyze))+$)'
 T_TIMESTAMP_UTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
 T_VACUUM_ID = b'(^[0-9a-f]{8}$)'
 

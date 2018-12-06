@@ -514,12 +514,7 @@ def vacuum(conn, dbname, schema, table, mode):
 
     # Build the SQL query
     q = "VACUUM"
-    if mode == 'full':
-        q += " FULL"
-    elif mode == 'analyze':
-        q += " ANALYZE"
-    elif mode == 'freeze':
-        q += " FREEZE"
+    q += " (%s) " % mode.upper()
     q += " {schema}.{table}".format(schema=schema, table=table)
 
     try:
