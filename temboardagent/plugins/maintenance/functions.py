@@ -539,7 +539,7 @@ def task_status_label(status):
         return 'unknown'
 
 
-def list_scheduled_vacuum(app):
+def list_scheduled_vacuum(app, **kwargs):
     # Get list of scheduled vacuum operations
     ret = []
     try:
@@ -554,15 +554,25 @@ def list_scheduled_vacuum(app):
         raise HTTPError(500, "Unable to get scheduled vacuum list")
 
     for task in tasks:
+
         # We only want vacuum tasks
         if task['worker_name'] != 'vacuum_worker':
             continue
+
+        options = task['options']
+        # Filter by db/schema/table if provided
+        if (all(k in kwargs for k in ['dbname', 'schema', 'table']) and
+            (kwargs.get('dbname') != options.get('dbname') or
+             kwargs.get('schema') != options.get('schema') or
+             kwargs.get('table') != options.get('table'))):
+            continue
+
         ret.append(dict(
             id=task['id'],
-            dbname=task['options'].get('dbname'),
-            schema=task['options'].get('schema'),
-            table=task['options'].get('table'),
-            mode=task['options'].get('mode'),
+            dbname=options.get('dbname'),
+            schema=options.get('schema'),
+            table=options.get('table'),
+            mode=options.get('mode'),
             datetime=task['start_datetime'].strftime("%Y-%m-%dT%H:%M:%SZ"),
             status=task_status_label(task['status'])
         ))
@@ -574,7 +584,7 @@ def cancel_scheduled_vacuum(id, app):
     # is going to be aborted.
 
     # Check the id
-    if not id in [t['id'] for t in list_scheduled_vacuum(app)]:
+    if id not in [t['id'] for t in list_scheduled_vacuum(app)]:
         raise HTTPError(404, "Scheduled vacuum operation not found")
 
     try:

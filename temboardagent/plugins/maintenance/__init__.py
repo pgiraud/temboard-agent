@@ -99,15 +99,26 @@ def post_vacuum(http_context, app):
                                          dt, app)
 
 
-@routes.get(b'/vacuum/scheduled')
-def scheduled_vacuum(http_context, app):
-    return functions.list_scheduled_vacuum(app)
+@routes.get(b'/%s/schema/%s/table/%s/vacuum/scheduled' % (T_DATABASE_NAME,
+                                                          T_SCHEMA_NAME,
+                                                          T_TABLE_NAME))
+def scheduled_vacuum_table(http_context, app):
+    dbname = http_context['urlvars'][0]
+    schema = http_context['urlvars'][1]
+    table = http_context['urlvars'][2]
+    return functions.list_scheduled_vacuum(app, dbname=dbname, schema=schema,
+                                           table=table)
 
 
 @routes.delete(b'/vacuum/' + T_VACUUM_ID)
 def delete_vacuum(http_context, app):
     vacuum_id = http_context['urlvars'][0]
     return functions.cancel_scheduled_vacuum(vacuum_id, app)
+
+
+@routes.get(b'/vacuum/scheduled')
+def scheduled_vacuum(http_context, app):
+    return functions.list_scheduled_vacuum(app)
 
 
 @taskmanager.worker(pool_size=10)
