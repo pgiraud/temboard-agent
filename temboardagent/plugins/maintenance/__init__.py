@@ -33,7 +33,7 @@ def get_instance(http_context, app):
 T_DATABASE_NAME = T_OBJECTNAME
 T_SCHEMA_NAME = T_OBJECTNAME
 T_TABLE_NAME = T_OBJECTNAME
-T_VACUUM_MODE = b'(((^|,)(standard|full|freeze|analyze))+$)'
+T_VACUUM_MODE = b'(((^|,)(full|freeze|analyze))+$)'
 T_TIMESTAMP_UTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
 T_VACUUM_ID = b'(^[0-9a-f]{8}$)'
 
@@ -92,7 +92,7 @@ def post_vacuum(http_context, app):
         validate_parameters(post, [
             ('mode', T_VACUUM_MODE, False),
         ])
-    mode = post.get('mode', 'standard')
+    mode = post.get('mode', '')
 
     with functions.get_postgres(app.config, dbname).connect() as conn:
         return functions.schedule_vacuum(conn, dbname, schema, table, mode,

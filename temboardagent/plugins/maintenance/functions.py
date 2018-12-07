@@ -514,7 +514,7 @@ def vacuum(conn, dbname, schema, table, mode):
 
     # Build the SQL query
     q = "VACUUM"
-    q += " (%s) " % mode.upper()
+    q += " (%s) " % mode.upper() if mode else ""
     q += " {schema}.{table}".format(schema=schema, table=table)
 
     try:
