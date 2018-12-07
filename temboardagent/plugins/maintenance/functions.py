@@ -18,7 +18,11 @@ SELECT current_database(), schemaname, tblname, bs*tblpages AS real_size,
   CASE WHEN tblpages - est_tblpages > 0
     THEN 100 * (tblpages - est_tblpages)/tblpages::float
     ELSE 0
-  END AS extra_ratio, fillfactor, (tblpages-est_tblpages_ff)*bs AS bloat_size,
+  END AS extra_ratio, fillfactor,
+  CASE WHEN tblpages - est_tblpages_ff > 0
+    THEN (tblpages-est_tblpages_ff)*bs
+    ELSE 0
+  END AS bloat_size,
   CASE WHEN tblpages - est_tblpages_ff > 0
     THEN 100 * (tblpages - est_tblpages_ff)/tblpages::float
     ELSE 0
@@ -75,7 +79,11 @@ INDEX_BTREE_BLOAT_SQL = """
 SELECT current_database(), nspname AS schemaname, tblname, idxname, bs*(relpages)::bigint AS real_size,
   bs*(relpages-est_pages)::bigint AS extra_size,
   100 * (relpages-est_pages)::float / relpages AS extra_ratio,
-  fillfactor, bs*(relpages-est_pages_ff) AS bloat_size,
+  fillfactor,
+  CASE WHEN relpages > est_pages_ff
+    THEN bs*(relpages-est_pages_ff)
+    ELSE 0
+  END AS bloat_size,
   100 * (relpages-est_pages_ff)::float / relpages AS bloat_ratio,
   is_na
   -- , 100-(sub.pst).avg_leaf_density, est_pages, index_tuple_hdr_bm, maxalign, pagehdr, nulldatawidth, nulldatahdrwidth, sub.reltuples, sub.relpages -- (DEBUG INFO)
