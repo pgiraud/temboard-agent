@@ -35,7 +35,7 @@ T_SCHEMA_NAME = T_OBJECTNAME
 T_TABLE_NAME = T_OBJECTNAME
 T_VACUUM_MODE = b'(((^|,)(full|freeze|analyze))+$)'
 T_TIMESTAMP_UTC = b'(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$)'
-T_VACUUM_ID = b'(^[0-9a-f]{8}$)'
+T_OPERATION_ID = b'(^[0-9a-f]{8}$)'
 
 
 @routes.get(b'/%s' % (T_DATABASE_NAME))
@@ -86,8 +86,7 @@ def post_vacuum(http_context, app):
         validate_parameters(post, [
             ('datetime', T_TIMESTAMP_UTC, False),
         ])
-    dt = post.get('datetime',
-                  datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
+    dt = post.get('datetime', datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
     if 'mode' in post:
         validate_parameters(post, [
             ('mode', T_VACUUM_MODE, False),
@@ -110,10 +109,10 @@ def scheduled_vacuum_table(http_context, app):
                                            table=table)
 
 
-@routes.delete(b'/vacuum/' + T_VACUUM_ID)
+@routes.delete(b'/vacuum/' + T_OPERATION_ID)
 def delete_vacuum(http_context, app):
     vacuum_id = http_context['urlvars'][0]
-    return functions.cancel_scheduled_vacuum(vacuum_id, app)
+    return functions.cancel_scheduled_operation(vacuum_id, app)
 
 
 @routes.get(b'/vacuum/scheduled')
@@ -128,6 +127,56 @@ def vacuum_worker(config, dbname, schema, table, mode):
     with functions.get_postgres(config, dbname).connect() \
             as conn:
         return functions.vacuum(conn, dbname, schema, table, mode)
+
+
+@routes.post(b'/%s/schema/%s/table/%s/analyze' % (T_DATABASE_NAME,
+                                                  T_SCHEMA_NAME,
+                                                  T_TABLE_NAME))
+def post_analyze(http_context, app):
+    dbname = http_context['urlvars'][0]
+    schema = http_context['urlvars'][1]
+    table = http_context['urlvars'][2]
+    # Parameters format validation
+    post = http_context['post']
+    if 'datetime' in post:
+        validate_parameters(post, [
+            ('datetime', T_TIMESTAMP_UTC, False),
+        ])
+    dt = post.get('datetime', datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+    with functions.get_postgres(app.config, dbname).connect() as conn:
+        return functions.schedule_analyze(conn, dbname, schema, table, dt, app)
+
+
+@routes.get(b'/%s/schema/%s/table/%s/analyze/scheduled' % (T_DATABASE_NAME,
+                                                           T_SCHEMA_NAME,
+                                                           T_TABLE_NAME))
+def scheduled_analyze_table(http_context, app):
+    dbname = http_context['urlvars'][0]
+    schema = http_context['urlvars'][1]
+    table = http_context['urlvars'][2]
+    return functions.list_scheduled_analyze(app, dbname=dbname, schema=schema,
+                                            table=table)
+
+
+@routes.delete(b'/analyze/' + T_OPERATION_ID)
+def delete_analyze(http_context, app):
+    analyze_id = http_context['urlvars'][0]
+    return functions.cancel_scheduled_operation(analyze_id, app)
+
+
+@routes.get(b'/analyze/scheduled')
+def scheduled_analyze(http_context, app):
+    return functions.list_scheduled_analyze(app)
+
+
+@taskmanager.worker(pool_size=10)
+def analyze_worker(config, dbname, schema, table):
+    config = unpickle(config)
+
+    with functions.get_postgres(config, dbname).connect() \
+            as conn:
+        return functions.analyze(conn, dbname, schema, table)
 
 
 class MaintenancePlugin(object):

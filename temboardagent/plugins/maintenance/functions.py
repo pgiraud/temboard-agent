@@ -454,8 +454,20 @@ AND table_name = '{}';
     return dict(**next(conn.get_rows()))
 
 
-def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
-    # Schedule a vacuum statement through vacuum background worker
+def check_table_exists(conn, schema, table):
+    # Check that the specified table exists in schema
+    conn.execute(
+        "SELECT 1 FROM pg_tables WHERE tablename = '{table}' AND "
+        "schemaname = '{schema}'".format(table=table, schema=schema)
+    )
+    if not list(conn.get_rows()):
+        raise UserError("Table %s.%s not found" % (schema, table))
+
+
+def schedule_operation(operation_type, conn, database, schema, table,
+                       datetimeutc, app, **kwargs):
+    # Schedule a maintenance operation (vacuum or analyze) statement through
+    # background worker
 
     # Check that the specified table exists in schema
     conn.execute(
@@ -465,32 +477,36 @@ def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
     if not list(conn.get_rows()):
         raise HTTPError(404, "Table %s.%s not found" % (schema, table))
 
-    # Schedule a new task to vacuum worker
+    # Schedule a new task to background worker
 
     # We need to build a uniq id for this task to avoid scheduling twice the
-    # same vacuum statement.
+    # same statement.
     m = hashlib.md5()
-    m.update("{database}:{schema}:{table}:{datetime}".format(
+    m.update("{database}:{schema}:{table}:{datetime}:{operation_type}".format(
         database=database,
         schema=schema,
         table=table,
-        datetime=datetimeutc).encode('utf-8')
+        datetime=datetimeutc,
+        operation_type=operation_type).encode('utf-8')
     )
     # Task scheduling
     try:
         # Convert string datetime to datetime object
         dt = datetime.strptime(datetimeutc, '%Y-%m-%dT%H:%M:%SZ')
 
+        options = {
+            'config': pickle(app.config),
+            'dbname': database,
+            'schema': schema,
+            'table': table,
+        }
+        if 'mode' in kwargs:
+            options['mode'] = kwargs['mode']
+
         res = taskmanager.schedule_task(
-            'vacuum_worker',
+            operation_type + '_worker',
             id=m.hexdigest()[:8],
-            options={
-                'config': pickle(app.config),
-                'dbname': database,
-                'schema': schema,
-                'table': table,
-                'mode': mode
-            },
+            options=options,
             # We add one microsecond here to be compliant with scheduler
             # datetime format expected during task recovery
             start=(dt + timedelta(microseconds=1)),
@@ -500,24 +516,23 @@ def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
         )
     except Exception as e:
         logger.exception(str(e))
-        raise HTTPError(500, "Unable to schedule vacuum")
+        raise HTTPError(500, "Unable to schedule %s" % operation_type)
 
     if res.type == taskmanager.MSG_TYPE_ERROR:
         logger.error(res.content)
-        raise HTTPError(500, "Unable to schedule vacuum")
+        raise HTTPError(500, "Unable to schedule %s" % operation_type)
 
     return res.content
 
 
+def schedule_vacuum(conn, database, schema, table, mode, datetimeutc, app):
+    return schedule_operation('vacuum', conn, database, schema, table,
+                              datetimeutc, app, mode=mode)
+
+
 def vacuum(conn, dbname, schema, table, mode):
     # Run vacuum statement
-    # Check that the specified table exists in schema
-    conn.execute(
-        "SELECT 1 FROM pg_tables WHERE tablename = '{table}' AND "
-        "schemaname = '{schema}'".format(table=table, schema=schema)
-    )
-    if not list(conn.get_rows()):
-        raise UserError("Table %s.%s not found" % (schema, table))
+    check_table_exists(conn, schema, table)
 
     # Build the SQL query
     q = "VACUUM"
@@ -546,7 +561,7 @@ def task_status_label(status):
         return 'unknown'
 
 
-def list_scheduled_vacuum(app, **kwargs):
+def list_scheduled_operation(app, operation_type, **kwargs):
     # Get list of scheduled vacuum operations
     ret = []
     try:
@@ -562,8 +577,8 @@ def list_scheduled_vacuum(app, **kwargs):
 
     for task in tasks:
 
-        # We only want vacuum tasks
-        if task['worker_name'] != 'vacuum_worker':
+        # We only want tasks for the operation type ('vacuum' or 'analyze')
+        if task['worker_name'] != operation_type + '_worker':
             continue
 
         options = task['options']
@@ -586,12 +601,44 @@ def list_scheduled_vacuum(app, **kwargs):
     return ret
 
 
-def cancel_scheduled_vacuum(id, app):
+def list_scheduled_vacuum(app, **kwargs):
+    return list_scheduled_operation(app, 'vacuum', **kwargs)
+
+
+def schedule_analyze(conn, database, schema, table, datetimeutc, app):
+    return schedule_operation('analyze', conn, database, schema, table,
+                              datetimeutc, app)
+
+
+def analyze(conn, dbname, schema, table):
+    # Run analyze statement
+    check_table_exists(conn, schema, table)
+
+    # Build the SQL query
+    q = "ANALYZE {schema}.{table}".format(schema=schema, table=table)
+
+    try:
+        # Try to execute the statement
+        logger.info("Running SQL on DB %s: %s" % (dbname, q))
+        conn.execute(q)
+        logger.info("ANALYZE done.")
+    except error as e:
+        logger.exception(str(e))
+        logger.error("Unable to execute SQL: %s" % q)
+        raise UserError("Unable to run analyze %s on %s.%s" % (schema, table,))
+
+
+def list_scheduled_analyze(app, **kwargs):
+    return list_scheduled_operation(app, 'analyze', **kwargs)
+
+
+def cancel_scheduled_operation(id, app):
     # Cancel one scheduled vacuum operation. If the vacuum is running, the task
     # is going to be aborted.
 
     # Check the id
-    if id not in [t['id'] for t in list_scheduled_vacuum(app)]:
+    if id not in [t['id'] for t in
+                  list_scheduled_vacuum(app) + list_scheduled_analyze(app)]:
         raise HTTPError(404, "Scheduled vacuum operation not found")
 
     try:
