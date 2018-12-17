@@ -160,6 +160,7 @@ ORDER BY 2,3,4
 
 SCHEMAS_SQL = """
 SELECT n.nspname AS "name",
+       schema_size AS bytes,
        pg_size_pretty(schema_size) AS size,
        COALESCE(n_tables, 0) AS n_tables,
        tables_bytes,
@@ -307,10 +308,13 @@ def get_schemas(conn):
 
 def get_schema(conn, schema):
     query = """
-SELECT pg_size_pretty(SUM(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)))::BIGINT) AS size
-FROM pg_tables
+SELECT pg_size_pretty(bytes) AS size, bytes
+FROM (
+    SELECT schemaname, SUM(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)))::BIGINT AS bytes
+    FROM pg_tables
+    GROUP BY schemaname
+) a
 WHERE schemaname = '{schema}'
-GROUP BY schemaname
 """  # noqa
     conn.execute(query.format(schema=schema))
     try:
