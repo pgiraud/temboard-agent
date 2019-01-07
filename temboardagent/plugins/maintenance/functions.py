@@ -171,7 +171,9 @@ SELECT n.nspname AS "name",
        tbloat.bloat_size AS tables_bloat_bytes,
        pg_size_pretty(tbloat.bloat_size::bigint) AS tables_bloat_size,
        ibloat.bloat_size AS indexes_bloat_bytes,
-       pg_size_pretty(ibloat.bloat_size::bigint) AS indexes_bloat_size
+       pg_size_pretty(ibloat.bloat_size::bigint) AS indexes_bloat_size,
+       toast.toast_bytes,
+       pg_size_pretty(toast.toast_bytes) AS toast_size
 FROM pg_catalog.pg_namespace n
 -- schema size + tables for the schema (count, size)
 -- See https://wiki.postgresql.org/wiki/Schema_Size
@@ -184,6 +186,15 @@ LEFT JOIN (
   GROUP BY schemaname
 ) AS a
 ON a.schemaname = n.nspname
+-- toast size
+LEFT JOIN (
+  SELECT nspname,
+         SUM(pg_total_relation_size(reltoastrelid)) AS toast_bytes
+  FROM pg_class c
+  LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
+  GROUP BY nspname
+) AS toast
+ON toast.nspname = n.nspname
 -- indexes for the schema (count, size)
 LEFT JOIN (
   SELECT count(*) as n_indexes,
@@ -211,9 +222,26 @@ LEFT JOIN (
   GROUP BY schemaname
 ) AS ibloat
 ON ibloat.schemaname = n.nspname
-WHERE n.nspname !~ '^pg_'
-AND n.nspname <> 'information_schema'
+WHERE n.nspname !~ '^pg_temp' AND n.nspname !~ '^pg_toast'
 """ % (TABLE_BLOAT_SQL, INDEX_BTREE_BLOAT_SQL)  # noqa
+
+
+TABLES_SQL = """
+SELECT c.oid,nspname AS schemaname,
+       relname AS tblname,
+       c.reltuples AS row_estimate,
+       pg_total_relation_size(c.oid) AS total_bytes,
+       pg_indexes_size(c.oid) AS index_bytes,
+       pg_total_relation_size(reltoastrelid) AS toast_bytes,
+       tbloat.*
+FROM pg_class c
+LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN (
+  %s
+) AS tbloat
+ON tbloat.schemaname = nspname AND tbloat.tblname = relname
+WHERE relkind = 'r'
+""" % (TABLE_BLOAT_SQL)
 
 
 INDEXES_SQL = """
@@ -275,7 +303,8 @@ WHERE NOT datistemplate;
 
 def get_database_size(conn):
     query = """
-SELECT pg_size_pretty(pg_database_size(current_database())) AS size"""
+SELECT pg_size_pretty(pg_database_size(current_database())) AS size,
+       pg_database_size(current_database()) AS bytes"""
     conn.execute(query)
     return next(conn.get_rows())
 
@@ -342,14 +371,14 @@ SELECT table_name AS name,
        pg_size_pretty(ibloat.bloat_size::bigint) AS index_bloat_size,
        row_estimate
 FROM (
-  SELECT *, total_bytes - index_bytes - COALESCE(toast_bytes,0) AS table_bytes
+  SELECT *, total_bytes - index_bytes - toast_bytes AS table_bytes
   FROM (
     SELECT c.oid,nspname AS table_schema,
            relname AS TABLE_NAME,
            c.reltuples AS row_estimate,
            pg_total_relation_size(c.oid) AS total_bytes,
            pg_indexes_size(c.oid) AS index_bytes,
-           pg_total_relation_size(reltoastrelid) AS toast_bytes
+           COALESCE(pg_total_relation_size(reltoastrelid), 0) AS toast_bytes
     FROM pg_class c
     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE relkind = 'r'
@@ -382,6 +411,18 @@ WHERE table_schema = '{}';
     for row in conn.get_rows():
         ret['tables'].append(row)
     return ret
+
+
+def get_tables_complete(conn):
+    query = TABLES_SQL
+    conn.execute(query)
+    return [row for row in conn.get_rows()]
+
+
+def get_indexes_complete(conn):
+    query = INDEX_BTREE_BLOAT_SQL
+    conn.execute(query)
+    return [row for row in conn.get_rows()]
 
 
 def get_schema_indexes(conn, schema):

@@ -47,6 +47,16 @@ def get_database(http_context, app):
     return dict(database, **{'schemas': schemas})
 
 
+@routes.get(b'/%s/tables' % (T_DATABASE_NAME))
+def get_database_tables(http_context, app):
+    dbname = http_context['urlvars'][0]
+    with functions.get_postgres(app.config, dbname).connect() as conn:
+        database = functions.get_database_size(conn)
+        tables = functions.get_tables_complete(conn)
+        indexes = functions.get_indexes_complete(conn)
+    return dict(database, **{'tables': tables, 'indexes': indexes})
+
+
 @routes.get(b'/%s/schema/%s' % (T_DATABASE_NAME, T_SCHEMA_NAME))
 def get_schema(http_context, app):
     dbname = http_context['urlvars'][0]
