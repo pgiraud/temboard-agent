@@ -160,7 +160,7 @@ ORDER BY 2,3,4
 
 SCHEMAS_SQL = """
 SELECT n.nspname AS "name",
-       schema_size AS bytes,
+       COALESCE(schema_size, 0) AS bytes,
        pg_size_pretty(schema_size) AS size,
        COALESCE(n_tables, 0) AS n_tables,
        tables_bytes,
@@ -293,7 +293,9 @@ def get_postgres(app_config, database):
 
 def get_databases(conn):
     query = """
-SELECT datname, pg_size_pretty(pg_database_size(datname)) AS size
+SELECT datname,
+       pg_database_size(datname) AS bytes,
+       pg_size_pretty(pg_database_size(datname)) AS size
 FROM pg_database
 WHERE NOT datistemplate;
     """
@@ -320,7 +322,9 @@ SELECT SUM(n_tables) AS n_tables,
        SUM(tables_bloat_bytes) AS tables_bloat_bytes,
        pg_size_pretty(SUM(tables_bloat_bytes)::bigint) AS tables_bloat_size,
        SUM(indexes_bloat_bytes) AS indexes_bloat_bytes,
-       pg_size_pretty(SUM(indexes_bloat_bytes)::bigint) AS indexes_bloat_size
+       pg_size_pretty(SUM(indexes_bloat_bytes)::bigint) AS indexes_bloat_size,
+       SUM(toast_bytes) AS toast_bytes,
+       pg_size_pretty(SUM(toast_bytes)::bigint) AS toast_size
 FROM (%s) a""" % SCHEMAS_SQL
     conn.execute(query)
     return next(conn.get_rows())
@@ -337,7 +341,7 @@ def get_schemas(conn):
 
 def get_schema(conn, schema):
     query = """
-SELECT pg_size_pretty(bytes) AS size, bytes
+SELECT pg_size_pretty(bytes) AS size,  COALESCE(bytes, 0) as bytes
 FROM (
     SELECT schemaname, SUM(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(tablename)))::BIGINT AS bytes
     FROM pg_tables
